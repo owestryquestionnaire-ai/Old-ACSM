@@ -1,5 +1,9 @@
 # app.py
-# Single-file Streamlit app — final submission button is under Tab 3 (no separate Final tab).
+# Single-file Streamlit app:
+# - No separate Final tab
+# - "完成表3並最終送出評估" only in Tab 3
+# - Immediately computes & displays class and THR in Tab 3
+# - Stores class in session_state for Tab 4 manual THR calc
 
 import streamlit as st
 from datetime import date
@@ -151,11 +155,11 @@ def tab3_final_submit():
     age_for_thr = st.number_input("年齡（歲）", min_value=1, max_value=120, value=30, key="s_age")
     rhr_for_thr = st.number_input("靜息心率 RHR（bpm）", min_value=30, max_value=150, value=60, key="s_rhr")
 
+    # The submission button is here and only here
     if st.button("完成表3並最終送出評估（含 THR）"):
         # save symptoms
         symptoms_count = sum(1 for v in [c1, c2, c3, c4, c5, c6] if v)
         st.session_state[SESSION_KEYS["symptoms_count"]] = symptoms_count
-        st.success(f"第3表已儲存，偵測到 {symptoms_count} 項主要徵狀（若>0請就醫）。")
 
         # Ensure PAR-Q and Tab2 exist
         parq_yes = st.session_state.get(SESSION_KEYS["parq_yes_count"], None)
@@ -180,10 +184,12 @@ def tab3_final_submit():
 
         # classify
         exercise_class, reason = classify_exercise_risk(parq_yes, net_count, known_disease_flag, symptoms_count)
+        # store for Tab4
         st.session_state[SESSION_KEYS["exercise_class"]] = exercise_class
 
-        # show results
-        st.markdown("**最終評估結果**")
+        # show immediate results in Tab 3
+        st.success(f"第3表已儲存，偵測到 {symptoms_count} 項主要徵狀（若>0請就醫）。")
+        st.markdown("**最終評估結果（即時）**")
         st.write(f"- PAR-Q 陽性項目數：{parq_yes}")
         st.write(f"- Tab2 原始陽性因子數：{raw_count}")
         st.write(f"- Tab2 淨陽性因子數（HDL 保護後）：{net_count}")
@@ -205,7 +211,7 @@ def tab3_final_submit():
         else:
             st.error(f"運動分級：{exercise_class} — {reason}")
 
-        # THR calculation
+        # THR calculation and display
         risk_map = {"Class I": "low", "Class II": "moderate", "Class III": "high"}
         risk_level = risk_map.get(exercise_class, "moderate")
         thr_output, thr_error = calculate_thr(int(age_for_thr), int(rhr_for_thr), risk_level)
@@ -248,11 +254,11 @@ def main():
     inject_global_css()
     st.title(PAGE_TITLE)
 
-    # Four tabs: PAR-Q, Tab2, Tab3 (contains final submit), Tab4
+    # Four tabs: PAR-Q, Tab2, Tab3 (contains final submit button), Tab4
     tab1, tab2, tab3, tab4 = st.tabs([
         "1. PAR-Q",
         "2. 心血管疾病風險問卷",
-        "3. 主要徵狀 (含最終送出)",
+        "3. 主要徵狀（含最終送出）",
         "4. 運動分級與 THR"
     ])
 
@@ -261,7 +267,7 @@ def main():
     with tab2:
         tab_tab2()
     with tab3:
-        tab3_final_submit()   # final submission button resides here
+        tab3_final_submit()   # final submission button only here
     with tab4:
         tab4_thr_display()
 
