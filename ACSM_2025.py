@@ -134,10 +134,74 @@ with tab3:
     c5 = st.checkbox("心悸或不規則心跳", key="s_palpit")
     c6 = st.checkbox("下肢水腫（腳踝/足部腫脹）", key="s_swelling")
 
-    if st.button("完成表3並儲存"):
+    st.markdown("---")
+    st.subheader("可選：輸入年齡與靜息心率以立即計算 THR")
+    age_for_thr = st.number_input("年齡（歲）", min_value=1, max_value=120, value=30, key="s_age")
+    rhr_for_thr = st.number_input("靜息心率 RHR（bpm）", min_value=30, max_value=150, value=60, key="s_rhr")
+
+    if st.button("完成表3、儲存並立即評估（含 THR）"):
+        # save symptoms
         symptoms_count = sum(1 for v in [c1, c2, c3, c4, c5, c6] if v)
         st.session_state["symptoms_count"] = symptoms_count
         st.success(f"第3表已儲存，偵測到 {symptoms_count} 項主要徵狀（若>0請就醫）。")
+
+        # Ensure PAR-Q and Tab2 exist
+        parq_yes = st.session_state.get("parq_yes_count", None)
+        tab2 = st.session_state.get("tab2_answers", None)
+        if parq_yes is None or tab2 is None:
+            st.warning("請先完成第1表與第2表（PAR-Q 與心血管風險問卷），再進行最終評估。")
+            st.stop()
+
+        # compute Tab2 counts
+        raw_count, net_count, positive_items, ifgigt_flag, hdl_protect = calculate_risk_from_tab2(
+            {k: tab2[k] for k in tab2 if k in [
+                "年齡門檻","家族早發史","吸煙/近期戒菸/暴露","久坐/無定期運動","肥胖/高腰圍",
+                "高血壓/服藥或兩次測量升高","高膽固醇/服藥或血脂異常"
+            ]},
+            hdl_mg_dl=tab2.get("HDL_mg_dl", 0),
+            fbg_mmol=tab2.get("FBG_mmol", 0.0),
+            ogtt_mmol=tab2.get("OGTT_mmol", 0.0)
+        )
+
+        # known disease heuristic
+        known_disease_flag = any("高血壓" in s or "高膽固醇" in s or "肥胖" in s for s in positive_items)
+
+        # classify
+        exercise_class, reason = classify_exercise_risk(parq_yes, net_count, known_disease_flag, symptoms_count)
+        st.session_state["exercise_class"] = exercise_class
+
+        # show results
+        st.markdown("**即時評估結果**")
+        st.write(f"- PAR-Q 陽性項目數：{parq_yes}")
+        st.write(f"- Tab2 原始陽性因子數：{raw_count}")
+        st.write(f"- Tab2 淨陽性因子數（HDL 保護後）：{net_count}")
+        if positive_items:
+            st.write("- Tab2 標為陽性的項目：")
+            for it in positive_items:
+                st.write(f"  - {it}")
+        if ifgigt_flag or tab2.get("IFG_manual"):
+            st.write("- IFG/IGT（前期糖尿病）：是")
+        if hdl_protect:
+            st.write(f"- HDL 保護已套用 (HDL={tab2.get('HDL_mg_dl')} mg/dL)。")
+
+        if exercise_class == "Class I":
+            st.success(f"運動分級：{exercise_class} — {reason}")
+        elif exercise_class == "Class II":
+            st.warning(f"運動分級：{exercise_class} — {reason}")
+        else:
+            st.error(f"運動分級：{exercise_class} — {reason}")
+
+        # THR calculation
+        risk_map = {"Class I": "low", "Class II": "moderate", "Class III": "high"}
+        risk_level = risk_map.get(exercise_class, "moderate")
+        thr_output, thr_error = calculate_thr(int(age_for_thr), int(rhr_for_thr), risk_level)
+        if thr_error:
+            st.error(f"THR 計算錯誤：{thr_error}")
+        else:
+            st.subheader("計算目標心率 (THR)")
+            st.text(thr_output)
+            st.caption("註：Class I → low；Class II → moderate；Class III → high（高風險僅顯示上限）。")
+
 
 with tab4:
     st.header("4. 運動分級與 THR（綜合）")
