@@ -1,5 +1,5 @@
 # app.py
-# Single-file Streamlit app: final-submit merged into Tab 3 (compute class + THR after completing Form 3)
+# Single-file Streamlit app — final submission button is under Tab 3 (no separate Final tab).
 
 import streamlit as st
 from datetime import date
@@ -248,10 +248,11 @@ def main():
     inject_global_css()
     st.title(PAGE_TITLE)
 
+    # Four tabs: PAR-Q, Tab2, Tab3 (contains final submit), Tab4
     tab1, tab2, tab3, tab4 = st.tabs([
         "1. PAR-Q",
         "2. 心血管疾病風險問卷",
-        "3. 主要徵狀",
+        "3. 主要徵狀 (含最終送出)",
         "4. 運動分級與 THR"
     ])
 
@@ -260,7 +261,7 @@ def main():
     with tab2:
         tab_tab2()
     with tab3:
-        tab3_final_submit()
+        tab3_final_submit()   # final submission button resides here
     with tab4:
         tab4_thr_display()
 
