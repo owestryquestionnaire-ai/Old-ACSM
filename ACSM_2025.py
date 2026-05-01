@@ -1,6 +1,12 @@
+# app.py
+# Single-file Streamlit app: final-submit merged into Tab 3 (compute class + THR after completing Form 3)
+
 import streamlit as st
 from datetime import date
 
+####################
+# Config / Constants
+####################
 PAGE_TITLE = "運動準備度四合一評估"
 SESSION_KEYS = {
     "parq_yes_count": "parq_yes_count",
@@ -8,6 +14,10 @@ SESSION_KEYS = {
     "symptoms_count": "symptoms_count",
     "exercise_class": "exercise_class"
 }
+
+####################
+# Calculations / Logic
+####################
 def calculate_risk_from_tab2(answers_dict, hdl_mg_dl=0, fbg_mmol=0.0, ogtt_mmol=0.0):
     positive_items = [k for k, v in answers_dict.items() if v]
     raw_count = len(positive_items)
@@ -50,6 +60,10 @@ def classify_exercise_risk(parq_yes_count, tab2_net_count, known_disease=False, 
 
 def today_str():
     return date.today().strftime("%m/%d/%Y")
+
+####################
+# UI helpers (CSS)
+####################
 def inject_global_css():
     st.markdown(
         """
@@ -66,6 +80,10 @@ def inject_global_css():
         """,
         unsafe_allow_html=True,
     )
+
+####################
+# Tab implementations
+####################
 def tab_parq():
     st.header("1. PAR-Q（體能活動適應能力問卷）")
     p1 = st.radio("1. 醫生是否曾說您有心臟病且只能在醫生建議下運動？", ("否", "是"), key="parq1", horizontal=True)
@@ -82,6 +100,7 @@ def tab_parq():
         st.error(f"PAR-Q 有 {parq_yes_count} 項為「是」。建議諮詢醫師。")
     else:
         st.success("PAR-Q 無陽性（目前）。")
+
 def tab_tab2():
     st.header("2. 心血管疾病風險問卷（輸入區，自動儲存）")
     q1 = st.radio("1. 年齡: 男性 ≥45 或 女性 ≥55？", ("否", "是"), key="q_age", horizontal=True)
@@ -116,6 +135,7 @@ def tab_tab2():
         "HDL_mg_dl": hdl
     }
     st.info("輸入已自動暫存。完成第3表後按「完成表3並最終送出評估（含 THR）」。")
+
 def tab3_final_submit():
     st.header("3. 主要徵狀（心血管 / 呼吸 / 代謝）")
     st.write("在過去 12 個月內，是否有下列症狀？")
@@ -132,16 +152,19 @@ def tab3_final_submit():
     rhr_for_thr = st.number_input("靜息心率 RHR（bpm）", min_value=30, max_value=150, value=60, key="s_rhr")
 
     if st.button("完成表3並最終送出評估（含 THR）"):
+        # save symptoms
         symptoms_count = sum(1 for v in [c1, c2, c3, c4, c5, c6] if v)
         st.session_state[SESSION_KEYS["symptoms_count"]] = symptoms_count
         st.success(f"第3表已儲存，偵測到 {symptoms_count} 項主要徵狀（若>0請就醫）。")
 
+        # Ensure PAR-Q and Tab2 exist
         parq_yes = st.session_state.get(SESSION_KEYS["parq_yes_count"], None)
         tab2 = st.session_state.get(SESSION_KEYS["tab2_answers"], None)
         if parq_yes is None or tab2 is None:
             st.warning("請先完成第1表與第2表（PAR-Q 與心血管風險問卷），再進行最終評估。")
             st.stop()
 
+        # compute Tab2 counts
         raw_count, net_count, positive_items, ifgigt_flag, hdl_protect = calculate_risk_from_tab2(
             {k: tab2[k] for k in tab2 if k in [
                 "年齡門檻","家族早發史","吸煙/近期戒菸/暴露","久坐/無定期運動","肥胖/高腰圍",
@@ -152,11 +175,14 @@ def tab3_final_submit():
             ogtt_mmol=tab2.get("OGTT_mmol", 0.0)
         )
 
+        # known disease heuristic
         known_disease_flag = any("高血壓" in s or "高膽固醇" in s or "肥胖" in s for s in positive_items)
 
+        # classify
         exercise_class, reason = classify_exercise_risk(parq_yes, net_count, known_disease_flag, symptoms_count)
         st.session_state[SESSION_KEYS["exercise_class"]] = exercise_class
 
+        # show results
         st.markdown("**最終評估結果**")
         st.write(f"- PAR-Q 陽性項目數：{parq_yes}")
         st.write(f"- Tab2 原始陽性因子數：{raw_count}")
@@ -179,6 +205,7 @@ def tab3_final_submit():
         else:
             st.error(f"運動分級：{exercise_class} — {reason}")
 
+        # THR calculation
         risk_map = {"Class I": "low", "Class II": "moderate", "Class III": "high"}
         risk_level = risk_map.get(exercise_class, "moderate")
         thr_output, thr_error = calculate_thr(int(age_for_thr), int(rhr_for_thr), risk_level)
@@ -188,6 +215,7 @@ def tab3_final_submit():
             st.subheader("計算目標心率 (THR)")
             st.text(thr_output)
             st.caption("註：Class I → low；Class II → moderate；Class III → high（高風險僅顯示上限）。")
+
 def tab4_thr_display():
     st.header("4. 運動分級與 THR（綜合）")
     selected_class = st.session_state.get(SESSION_KEYS["exercise_class"], None)
@@ -211,6 +239,10 @@ def tab4_thr_display():
                 st.subheader("THR 計算結果")
                 st.text(thr_output)
                 st.caption("註：Class I → low；Class II → moderate；Class III → high（高風險僅顯示上限）。")
+
+####################
+# Main / App Layout
+####################
 def main():
     st.set_page_config(page_title=PAGE_TITLE, layout="centered")
     inject_global_css()
@@ -233,7 +265,7 @@ def main():
         tab4_thr_display()
 
     st.markdown("---")
-    st.caption("免責聲明：此工具僅為快速篩檢與教育用途，不能替代專業醫療評估。若有異常或疑慮，請諮詢醫療專業人員.")
+    st.caption("免責聲明：此工具僅為快速篩檢與教育用途，不能替代專業醫療評估。若有異常或疑慮，請諮詢醫療專業人員。")
 
 if __name__ == "__main__":
     main()
