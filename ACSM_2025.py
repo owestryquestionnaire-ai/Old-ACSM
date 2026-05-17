@@ -1,253 +1,463 @@
-# app.py
 import streamlit as st
-from datetime import date
+import streamlit.components.v1 as components
 
-# ---------- Config ----------
-PAGE_TITLE = "運動準備度四合一評估"
-SESSION_KEYS = {
-    "parq_yes_count": "parq_yes_count",
-    "tab2_answers": "tab2_answers",
-    "symptoms_count": "symptoms_count",
-    "exercise_class": "exercise_class"
-}
+# ---------- 1. Initialization & Config ----------
+st.set_page_config(page_title="體能活動風險評估系統", layout="centered")
 
-# ---------- Logic ----------
-def calculate_risk_from_tab2(answers_dict, hdl_mg_dl=0, fbg_mmol=0.0, ogtt_mmol=0.0):
-    positive_items = [k for k, v in answers_dict.items() if v]
-    raw_count = len(positive_items)
-    ifgigt_by_value = (5.55 <= fbg_mmol <= 6.94) or (7.77 <= ogtt_mmol <= 11.04)
-    if ifgigt_by_value and "IFG/IGT" not in positive_items:
-        raw_count += 1
-    hdl_protective = (hdl_mg_dl >= 60)
-    net_count = max(0, raw_count - 1) if hdl_protective else raw_count
-    return raw_count, net_count, positive_items, ifgigt_by_value, hdl_protective
-
-def classify_exercise_risk(parq_yes_count, tab2_net_count, known_disease=False, symptoms_count=0):
-    if known_disease or symptoms_count >= 1:
-        return "Class III", "已知疾病或有主要徵狀，需醫療評估與許可。"
-    if (parq_yes_count != 0 and tab2_net_count == 2) or (tab2_net_count >= 2):
-        return "Class II", "危險因子較多或 PAR-Q 有陽性且 Tab2 = 2，建議醫療評估或謹慎增加運動。"
-    if parq_yes_count == 0 and tab2_net_count <= 1:
-        return "Class I", "PAR-Q 無陽性且危險因子淨數 ≤1，可開始或繼續運動。"
-    return "Unclassified", "未符合明確規則，請進一步評估。"
-
-def calculate_thr(age, rhr, risk_level_str):
-    mhr = 220 - age
-    if rhr >= mhr:
-        return None, "靜息心率不可大於或等於估計最大心率 (220 - 年齡)。"
-    hrr = mhr - rhr
-    if risk_level_str == "low":
-        lp, up = 0.50, 0.85
-        advice = "低風險：可考慮中強度到較高強度（漸進）。"
-    elif risk_level_str == "moderate":
-        lp, up = 0.40, 0.60
-        advice = "中等風險：建議從輕到中等強度開始。"
-    else:
-        lp, up = 0.30, 0.39
-        advice = "高風險：須先獲得醫療許可，建議非常輕度運動（<40% HRR）。"
-    lower = int((hrr * lp) + rhr)
-    upper = int((hrr * up) + rhr)
-    thr_text = f"估計 MHR: {mhr} bpm\nRHR: {rhr} bpm\nHRR: {hrr} bpm\n"
-    thr_text += (f"THR 區間: {lower} - {upper} bpm\n" if risk_level_str != "high" else f"THR 上限: {upper} bpm\n")
-    thr_text += advice
-    return thr_text, None
-
-# ---------- UI helpers ----------
-def inject_global_css():
+# --- CUSTOM CSS FOR EXTRA LARGE TEXT, ALL BLACK, BOLD TITLES ONLY ---
+def inject_custom_css():
     st.markdown(
         """
         <style>
-        html, body, .reportview-container, .main, .block-container { font-size: 16px; }
-        h1 { font-size: 28px !important; }
+        /* Global Base Font and Black Color */
+        html, body, [data-testid="stMarkdownContainer"] {
+            font-size: 20px !important;
+            color: #000000 !important;
+            font-weight: 400 !important; /* Normal weight for body */
+        }
+
+        /* Headers - BOLD */
+        h1 { font-size: 40px !important; color: #000000 !important; font-weight: bold !important; }
+        h2 { font-size: 34px !important; color: #000000 !important; font-weight: bold !important; border-bottom: 2px solid #000; padding-bottom: 10px; }
+        h3 { font-size: 28px !important; color: #000000 !important; font-weight: bold !important; }
+
+        /* Radio Buttons & Checkbox Labels - REGULAR */
+        div[data-testid="stRadio"] label p, 
+        div[data-testid="stCheckbox"] label p {
+            font-size: 22px !important;
+            font-weight: 400 !important; /* Regular weight */
+            color: #000000 !important;
+        }
+
+        /* Standard Text - REGULAR */
+        .stMarkdown p {
+            font-size: 20px !important;
+            color: #000000 !important;
+            font-weight: 400 !important;
+        }
+
+        /* Input Box Labels - BOLD (treated as titles for fields) */
+        label[data-testid="stWidgetLabel"] p {
+            font-size: 22px !important;
+            font-weight: bold !important;
+            color: #000000 !important;
+        }
+
+        /* Tabs font size - BOLD */
+        button[data-baseweb="tab"] div {
+            font-size: 20px !important;
+            color: #000000 !important;
+            font-weight: bold !important;
+        }
+        
+        /* Clear button styling */
+        button[kind="secondary"] {
+            margin-top: 5px;
+        }
+        
+        /* Combined Result Box Styling */
+        .final-result-box {
+            border: 3px solid #000000;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 2px 2px 10px rgba(0,0,0,0.1);
+        }
+        .final-thr-part {
+            font-size: 32px !important;
+            color: #000000 !important;
+            font-weight: bold !important;
+            line-height: 1.4 !important;
+            padding: 25px;
+            background-color: #ffffff;
+        }
+        .final-rec-part {
+            background-color: #f8f9fa;
+            padding: 25px;
+            border-top: 3px dashed #000000;
+        }
+        .final-rec-part p {
+            margin-bottom: 10px !important;
+            line-height: 1.5;
+        }
         </style>
         """,
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
 
-# ---------- Tabs ----------
-def tab_parq():
-    st.header("1. PAR-Q（體能活動適應能力問卷）")
-    p_keys = ["parq1","parq2","parq3","parq4","parq5","parq6","parq7"]
-    p_texts = [
-        "1. 醫生是否曾說您有心臟病且只能在醫生建議下運動？",
-        "2. 體能活動時您會有胸痛或不適？",
-        "3. 過去一個月內未活動時曾感胸痛？",
-        "4. 是否有頭暈、失去平衡或曾昏厥？",
-        "5. 骨骼或關節問題會因活動而惡化？",
-        "6. 醫師是否為您處方血壓或心臟用藥？",
-        "7. 是否有其他原因使您不應該進行體能活動？"
+# --- 預先初始化所有選項的 Session State，讓全域計算能順利抓取數值 ---
+def init_session_states():
+    # Form A
+    for i in range(7):
+        if f"p{i}" not in st.session_state: st.session_state[f"p{i}"] = "否"
+    
+    # Form B
+    for k in ["age", "fam", "smk", "sed", "obe", "htn", "lip"]:
+        if f"r_{k}" not in st.session_state: st.session_state[f"r_{k}"] = "否"
+    if "ifg_radio" not in st.session_state: st.session_state["ifg_radio"] = "否"
+    if "hdl_radio_val" not in st.session_state: st.session_state["hdl_radio_val"] = None
+    
+    # Form C
+    for k in ["hist_c", "hist_p", "hist_m"]:
+        if k not in st.session_state: st.session_state[k] = False
+    for i in range(9):
+        if f"sy_{i}" not in st.session_state: st.session_state[f"sy_{i}"] = False
+        
+    # Form C 額外彈出選項 (改為單選方塊的 Boolean 值)
+    for i in range(1, 4):
+        if f"cramp_loc_{i}" not in st.session_state: st.session_state[f"cramp_loc_{i}"] = False
+    for i in range(1, 6):
+        if f"cramp_time_{i}" not in st.session_state: st.session_state[f"cramp_time_{i}"] = False
+        
+    # 控制是否強制顯示所有表單的開關
+    if "force_show_all" not in st.session_state:
+        st.session_state["force_show_all"] = False
+
+init_session_states()
+
+
+# ---------- 2. Logic Functions ----------
+def parse_val(text):
+    t = str(text).strip()
+    if not t: return None
+    try:
+        return float(t)
+    except:
+        return None
+
+def calculate_thr(age, rhr, risk_level):
+    mhr = 220 - age
+    if rhr >= mhr: return None, "Abnormal Resting Heart Rate"
+    hrr = mhr - rhr
+
+    details_html = f'<div style="font-size: 18px; font-weight: normal; margin-top: 10px; color: #444;">Maximum HR: {mhr} | Resting HR: {rhr} | HR Reserve: {hrr}</div>'
+
+    if risk_level == "Class III":
+        limit = int((hrr * 0.40) + rhr)
+        thr_main = f"Target Heart Rate: < {limit} bpm (< 40% HRR)"
+        return thr_main + details_html, None
+    else:
+        rates = {"Class I": (0.40, 0.84), "Class II": (0.40, 0.60)}
+        lp, up = rates.get(risk_level)
+        lower = int((hrr * lp) + rhr)
+        upper = int((hrr * up) + rhr)
+        thr_main = f"Target Heart Rate: {lower} - {upper} bpm"
+        return thr_main + details_html, None
+
+def get_risk_score():
+    risk_keys = ["r_age", "r_fam", "r_smk", "r_sed", "r_obe", "r_htn", "r_lip"]
+    score = sum(1 for k in risk_keys if st.session_state.get(k) == "是")
+    if st.session_state.get("ifg_radio") == "是": score += 1
+    if st.session_state.get("hdl_radio_val") == "是": score -= 1
+    return max(0, score)
+
+# --- 全域即時計算當前風險分級 ---
+def calculate_current_class():
+    # 1. 優先檢查 Form C (Symptoms & History) -> Class III
+    history = any([st.session_state.get("hist_c"), st.session_state.get("hist_p"), st.session_state.get("hist_m")])
+    symptoms = any([st.session_state.get(f"sy_{i}") for i in range(9)])
+    if history or symptoms:
+        return "Class III"
+
+    # 2. 檢查 Form A 與 Form B -> Class II
+    parq_score = sum(1 for i in range(7) if st.session_state.get(f"p{i}") == "有")
+    risk_score = get_risk_score()
+    
+    if parq_score > 0 or risk_score >= 2:
+        return "Class II"
+    else:
+        return "Class I"
+
+
+# ---------- 3. Callbacks & Helpers ----------
+def clear_hdl_callback():
+    st.session_state["hdl_radio_val"] = None
+
+def enable_all_tabs_callback():
+    st.session_state["force_show_all"] = True
+
+# 使用 JavaScript 自動切換分頁的輔助函式
+def switch_tab(tab_index):
+    js = f"""
+    <script>
+        var tabs = window.parent.document.querySelectorAll('button[data-baseweb="tab"]');
+        if (tabs.length > {tab_index}) {{
+            tabs[{tab_index}].click();
+        }}
+    </script>
+    """
+    components.html(js, height=0)
+
+
+# ---------- 4. Tab Functions ----------
+def tab_c_symptoms(is_class_3, show_all_tabs):
+    st.header("Form C: 心血管疾病症狀")
+    st.subheader("已知病史")
+    st.checkbox("已知心臟疾病：心肌梗塞、心臟手術、導管/支架、瓣膜病、心衰竭、先天性心臟病等", key="hist_c")
+    st.checkbox("已知肺部疾病：慢性阻塞性肺病、哮喘、間質性肺病、囊性纖維化等", key="hist_p")
+    st.checkbox("已知代謝疾病：1型或2型糖尿病、腎臟疾病等", key="hist_m")
+
+    st.markdown("---")
+    st.subheader("主要徵狀")
+    s_items = [
+        "1. 因心臟缺血而引致的胸口、頸、下顎、上臂或其他部位痛楚或不適",
+        "2. 靜止或輕鬆活動時感到氣喘",
+        "3. 暈眩或失去知覺",
+        "4. 平臥時或晚間不時氣喘",
+        "5. 腳踝腫",
+        "6. 心悸或心率過快",
+        "7. 間歇肌肉疼痛、抽筋",
+        "8. 心雜音",
+        "9. 一般活動感到不尋常的疲勞或氣喘"
     ]
-    answers = []
-    for k, t in zip(p_keys, p_texts):
-        answers.append(st.radio(t, ("否","是"), key=k, horizontal=True))
-    parq_yes_count = sum(1 for a in answers if a == "是")
-    st.session_state[SESSION_KEYS["parq_yes_count"]] = parq_yes_count
-    if parq_yes_count > 0:
-        st.error(f"PAR-Q 有 {parq_yes_count} 項為「是」。建議諮詢醫師。")
+    
+    for i, label in enumerate(s_items):
+        st.checkbox(label, key=f"sy_{i}")
+        
+        # 當第 7 項 (index 6) 被勾選時，顯示多選核取方塊 (Checkboxes)
+        if i == 6 and st.session_state.get(f"sy_6"):
+            col_space, col_content = st.columns([0.5, 9.5])
+            with col_content:
+                st.markdown("<p style='font-size: 18px; color: #555; margin-bottom: 5px;'><b>📍 位置 (可多選)：</b></p>", unsafe_allow_html=True)
+                lc1, lc2, lc3 = st.columns(3)
+                lc1.checkbox("小腿", key="cramp_loc_1")
+                lc2.checkbox("大腿", key="cramp_loc_2")
+                lc3.checkbox("其他", key="cramp_loc_3")
+                
+                st.markdown("<p style='font-size: 18px; color: #555; margin-top: 10px; margin-bottom: 5px;'><b>⏱️ 發生時間 (可多選)：</b></p>", unsafe_allow_html=True)
+                tc1, tc2, tc3 = st.columns(3)
+                tc1.checkbox("睡覺時", key="cramp_time_1")
+                tc2.checkbox("走路時", key="cramp_time_2")
+                tc3.checkbox("上樓梯時", key="cramp_time_3")
+                tc4, tc5, _ = st.columns(3)
+                tc4.checkbox("上斜路時", key="cramp_time_4")
+                tc5.checkbox("其他", key="cramp_time_5")
+                st.write("") # 增加一點底部間距
+
+    st.markdown("---")
+    
+    if is_class_3:
+        if not show_all_tabs:
+            st.warning("🚨 根據已知病史或症狀，病患已判定為 **Class III**。系統已自動隱藏 Form B 與 Form A。")
+            if st.button("➡️ 直接跳至心率計算 (Skip to Target Heart Rate)", type="primary", key="skip_to_thr_c"):
+                switch_tab(1)  # 隱藏狀態下，心率計算是第 2 個分頁 (index 1)
+            st.button("📝 顯示隱藏的表單 (Show Form B & A)", on_click=enable_all_tabs_callback, key="show_all_c")
+        else:
+            st.warning("🚨 根據已知病史或症狀，病患已判定為 **Class III**。您選擇繼續填寫後續表單。")
+            if st.button("➡️ 下一步：前往 Form B (Next Step: Form B)", type="primary"):
+                switch_tab(1)  # 全顯示狀態下，Form B 是第 2 個分頁 (index 1)
     else:
-        st.success("PAR-Q 無陽性（目前）。")
+        if st.button("➡️ 下一步：前往 Form B (Next Step: Form B)", type="primary"):
+            switch_tab(1)
 
-def tab_tab2():
-    st.header("2. 心血管疾病風險問卷（輸入區，自動儲存）")
-    q1 = st.radio("1. 年齡: 男性 ≥45 或 女性 ≥55？", ("否","是"), key="q_age", horizontal=True)
-    q2 = st.radio("2. 家族早發史？", ("否","是"), key="q_famhx", horizontal=True)
-    q3 = st.radio("3. 吸煙或戒煙 <6 個月 / 長期暴露？", ("否","是"), key="q_smoke", horizontal=True)
-    q4 = st.radio("4. 無定期運動？", ("否","是"), key="q_sedentary", horizontal=True)
-    q5 = st.radio("5. 肥胖或高腰圍？", ("否","是"), key="q_obesity", horizontal=True)
-    q6 = st.radio("6. 高血壓或服藥？", ("否","是"), key="q_htn", horizontal=True)
-    q7 = st.radio("7. 高膽固醇或服藥？", ("否","是"), key="q_lipids", horizontal=True)
 
-    st.markdown("---")
-    st.subheader("8. 前期糖尿病 (IFG/IGT)")
-    q8_manual = st.radio("是否已被診斷為 IFG/IGT？", ("否","是"), key="q_ifg_manual", horizontal=True)
-    fbg = st.number_input("空腹血糖 FBG (mmol/L)", min_value=0.0, max_value=50.0, value=0.0, format="%.2f", key="q_fbg")
-    ogtt = st.number_input("OGTT 2小時值 (mmol/L)", min_value=0.0, max_value=50.0, value=0.0, format="%.2f", key="q_ogtt")
-    st.caption("IFG 門檻：FBG 5.55–6.94；IGT 門檻：OGTT 7.77–11.04 (mmol/L)")
+def tab_b_risk(is_class_2_b, show_all_tabs):
+    st.header("表格 B 心血管疾病風險因素")
+    st.markdown("請在適當項目選擇 **是(1)** 或 **否(0)**")
+    
+    items = [
+        ("age", "年齡", "*男性 45 歲或以上、女性 55 歲或以上"),
+        ("fam", "遺傳病因素", "*父親或男性近親在 55 歲前患有心肌梗塞，或接受冠狀動脈血管重建手術，或突然去世，或<br>*母親或女性近親在 65 歲前患有心肌梗塞，或接受冠狀動脈血管重建手術，或突然去世"),
+        ("smk", "吸煙習慣", "*吸煙人士，或戒煙少於 6 個月，或置身吸煙場所"),
+        ("sed", "靜態生活方式", "*沒有定期運動習慣 (每週至少三天有 30 分鐘或以上中度運動，並連續三個月以上)"),
+        ("obe", "肥胖", "*BMI ≥30kg/m²，或<br>*男士腰圍>102cm (40 吋)；女士腰圍>88cm (35 吋)"),
+        ("htn", "血壓高", "*正服用降血壓藥物，或<br>*上壓或下壓分別在兩次測試中≥140mmHg 或 ≥90 mmHg"),
+        ("lip", "高膽固醇", "*正服用降膽固醇藥物，或 TC>5.18mmol/L，或 HDL<1.04mmol/L，或 LDL >3.37mmol/L")
+    ]
+    
+    for key, label, desc in items:
+        col_l, col_r = st.columns([6, 2])
+        with col_l:
+            st.markdown(f"<div style='font-size: 22px; line-height: 1.5; margin-bottom: 10px;'><b>{label}</b><br>{desc}</div>", unsafe_allow_html=True) 
+        col_r.radio("", ("否", "是"), key=f"r_{key}", horizontal=True, label_visibility="collapsed")
 
-    st.markdown("---")
-    hdl = st.number_input("最近 HDL (mg/dL)（若不知輸入 0）", min_value=0, max_value=200, value=0, key="q_hdl")
-
-    st.session_state[SESSION_KEYS["tab2_answers"]] = {
-        "年齡門檻": (q1 == "是"),
-        "家族早發史": (q2 == "是"),
-        "吸煙/近期戒菸/暴露": (q3 == "是"),
-        "久坐/無定期運動": (q4 == "是"),
-        "肥胖/高腰圍": (q5 == "是"),
-        "高血壓/服藥或兩次測量升高": (q6 == "是"),
-        "高膽固醇/服藥或血脂異常": (q7 == "是"),
-        "IFG_manual": (q8_manual == "是"),
-        "FBG_mmol": fbg,
-        "OGTT_mmol": ogtt,
-        "HDL_mg_dl": hdl
-    }
-    st.info("輸入已自動暫存。完成第3表按「完成表3並最終送出評估（含 THR）」。")
-
-def tab3_final_submit():
-    st.header("3. 主要徵狀（心血管 / 呼吸 / 代謝）")
-    st.write("在過去 12 個月內，是否有下列症狀？")
-    c1 = st.checkbox("胸痛或胸悶（活動或休息時）", key="s_chest")
-    c2 = st.checkbox("輕微活動或休息時呼吸困難", key="s_breath")
-    c3 = st.checkbox("頭暈、昏厥或失去意識", key="s_dizzy")
-    c4 = st.checkbox("不尋常的疲勞", key="s_fatigue")
-    c5 = st.checkbox("心悸或不規則心跳", key="s_palpit")
-    c6 = st.checkbox("下肢水腫（腳踝/足部腫脹）", key="s_swelling")
+    col_l8, col_r8 = st.columns([6, 2])
+    with col_l8:
+        st.markdown("<div style='font-size: 22px; line-height: 1.5; margin-bottom: 10px;'><b>前期糖尿病</b><br>*所有確診 IFG/IGT 的人仕<br>血糖分別在兩次測試中大過或等於<br>空腹血糖值：5.55 - 6.94mmol/L;<br>葡萄糖失耐值：7.77 - 11.04mmol/L</div>", unsafe_allow_html=True)
+    st.radio("", ("否", "是"), key="ifg_radio", horizontal=True, label_visibility="collapsed")
 
     st.markdown("---")
-    st.subheader("可選：輸入年齡與靜息心率以立即計算 THR（若不輸入，THR 仍會使用預設）")
-    age_for_thr = st.number_input("年齡（歲）", min_value=1, max_value=120, value=30, key="s_age")
-    rhr_for_thr = st.number_input("靜息心率 RHR（bpm）", min_value=30, max_value=150, value=60, key="s_rhr")
+    
+    col_l9, col_r9, col_btn = st.columns([5, 2, 1])
+    with col_l9:
+        st.markdown("<div style='font-size: 22px;'><b>注意: 如 HDL ≥1.55mmol/L 可減 1 分。</b></div>", unsafe_allow_html=True)
+        
+    st.radio("", ("否", "是"), key="hdl_radio_val", horizontal=True, label_visibility="collapsed", index=None)
 
-    # Submission button only here
-    if st.button("完成表3並最終送出評估（含 THR）"):
-        symptoms_count = sum(1 for v in [c1, c2, c3, c4, c5, c6] if v)
-        st.session_state[SESSION_KEYS["symptoms_count"]] = symptoms_count
+    with col_btn:
+        st.button("清除", key="clear_hdl", on_click=clear_hdl_callback)
 
-        # require tab1 & tab2 saved
-        parq_yes = st.session_state.get(SESSION_KEYS["parq_yes_count"], None)
-        tab2 = st.session_state.get(SESSION_KEYS["tab2_answers"], None)
-        if parq_yes is None or tab2 is None:
-            st.warning("請先完成第1表與第2表（PAR-Q 與心血管風險問卷）。")
-            st.stop()
+    st.markdown("---")
 
-        # compute tab2 counts
-        raw_count, net_count, positive_items, ifgigt_flag, hdl_protect = calculate_risk_from_tab2(
-            {k: tab2[k] for k in tab2 if k in [
-                "年齡門檻","家族早發史","吸煙/近期戒菸/暴露","久坐/無定期運動","肥胖/高腰圍",
-                "高血壓/服藥或兩次測量升高","高膽固醇/服藥或血脂異常"
-            ]},
-            hdl_mg_dl=tab2.get("HDL_mg_dl", 0),
-            fbg_mmol=tab2.get("FBG_mmol", 0.0),
-            ogtt_mmol=tab2.get("OGTT_mmol", 0.0)
-        )
+    risk_score = get_risk_score()
+    st.markdown(f"### 運動風險因素評估: 總分 {risk_score} / 8 分")
 
-        # known disease heuristic
-        known_disease_flag = any("高血壓" in s or "高膽固醇" in s or "肥胖" in s for s in positive_items)
-
-        # classify and store
-        exercise_class, reason = classify_exercise_risk(parq_yes, net_count, known_disease_flag, symptoms_count)
-        st.session_state[SESSION_KEYS["exercise_class"]] = exercise_class
-
-        # display results immediately in Tab 3
-        st.success(f"第3表已儲存，偵測到 {symptoms_count} 項主要徵狀。")
-        st.markdown("**最終評估結果（即時）**")
-        st.write(f"- PAR-Q 陽性項目數：{parq_yes}")
-        st.write(f"- Tab2 原始陽性因子數：{raw_count}")
-        st.write(f"- Tab2 淨陽性因子數（HDL 保護後）：{net_count}")
-        if positive_items:
-            st.write("- Tab2 標為陽性的項目：")
-            for it in positive_items:
-                st.write(f"  - {it}")
-        if ifgigt_flag or tab2.get("IFG_manual"):
-            st.write("- IFG/IGT（前期糖尿病）：是")
-            if ifgigt_flag:
-                st.caption(f"判定依據：FBG={tab2.get('FBG_mmol')} mmol/L 或 OGTT2hr={tab2.get('OGTT_mmol')} mmol/L")
-        if hdl_protect:
-            st.write(f"- HDL 保護規則已套用 (HDL={tab2.get('HDL_mg_dl')} mg/dL)。")
-
-        if exercise_class == "Class I":
-            st.success(f"運動分級：{exercise_class} — {reason}")
-        elif exercise_class == "Class II":
-            st.warning(f"運動分級：{exercise_class} — {reason}")
+    if is_class_2_b:
+        if not show_all_tabs:
+            st.warning("🚨 根據風險因素總分 (≥ 2分)，病患已判定為 **Class II**。系統已自動隱藏 Form A。")
+            if st.button("➡️ 直接跳至心率計算 (Skip to Target Heart Rate)", type="primary", key="skip_to_thr_b"):
+                switch_tab(2)  # C(0), B(1), THR(2)
+            st.button("📝 顯示隱藏的表單 (Show Form A)", on_click=enable_all_tabs_callback, key="show_all_b")
         else:
-            st.error(f"運動分級：{exercise_class} — {reason}")
-
-        # compute THR and show
-        risk_map = {"Class I": "low", "Class II": "moderate", "Class III": "high"}
-        risk_level = risk_map.get(exercise_class, "moderate")
-        thr_output, thr_error = calculate_thr(int(age_for_thr), int(rhr_for_thr), risk_level)
-        if thr_error:
-            st.error(thr_error)
-        else:
-            st.subheader("計算目標心率 (THR)")
-            st.text(thr_output)
-            st.caption("註：Class I → low；Class II → moderate；Class III → high（高風險僅顯示上限）。")
-
-def tab4_thr_display():
-    st.header("4. 運動分級與 THR（綜合）")
-    selected_class = st.session_state.get(SESSION_KEYS["exercise_class"], None)
-    if selected_class:
-        st.info(f"目前儲存的運動分級：{selected_class}")
+            st.warning("🚨 根據風險因素總分 (≥ 2分)，病患已判定為 **Class II**。您選擇繼續填寫 Form A。")
+            if st.button("➡️ 下一步：前往 Form A (Next Step: Form A)", type="primary", key="next_a_show"):
+                switch_tab(2)  # C(0), B(1), A(2), THR(3)
     else:
-        st.info("尚無已儲存的運動分級（請在第3表完成最終送出）。")
-    age_thr = st.number_input("年齡（歲）", min_value=1, max_value=120, value=30, key="tab4_age")
-    rhr = st.number_input("靜息心率 RHR（bpm）", min_value=30, max_value=150, value=60, key="tab4_rhr")
-    if st.button("計算目標心率 (THR)"):
-        if selected_class is None:
-            st.warning("請先於第3表完成最終評估或手動選擇運動分級。")
-        else:
-            risk_map = {"Class I":"low","Class II":"moderate","Class III":"high"}
-            risk_level = risk_map.get(selected_class,"moderate")
-            thr_output, thr_error = calculate_thr(int(age_thr), int(rhr), risk_level)
-            if thr_error:
-                st.error(thr_error)
+        if st.button("➡️ 下一步：前往 Form A (Next Step: Form A)", type="primary", key="next_a_normal"):
+            switch_tab(2)
+
+
+def tab_a_parq():
+    st.header("表格 A 體能活動適應能力問卷 (PAR-Q)")
+    
+    qs = [
+        "1. 過往醫生有否說你有心臟病，而只應進行醫生建議的運動？",
+        "2. 當你做運動時有否感覺胸口痛？",
+        "3. 在過去數個月內，你有否在不做運動時也感到胸口痛？",
+        "4. 你有否因頭暈而跌倒或失去知覺？",
+        "5. 做運動有否加重你骨胳或關節的痛楚？",
+        "6. 醫生有否開藥給你的血壓或心臟病？",
+        "7. 有否其他原因令你不能做運動？"
+    ]
+    
+    for i, q in enumerate(qs):
+        st.radio(q, ("否", "有"), key=f"p{i}", horizontal=True)
+
+    st.markdown("---")
+    if st.button("➡️ 下一步：前往心率計算 (Next Step: Target Heart Rate)", type="primary"):
+        switch_tab(3)
+
+
+def tab_d_thr(current_class):
+    st.header("目標心率與臨床運動建議")
+    
+    # --- 手動選擇覆蓋 (Manual Override) ---
+    st.subheader("⚙️ 選擇運動分級 (Select Risk Class)")
+    st.markdown(f"💡 系統表單目前判定為 **{current_class}**。若病患已知分級，您可直接在下方手動更改：")
+    
+    options = ["Class I", "Class II", "Class III"]
+    default_idx = options.index(current_class) if current_class in options else 0
+    
+    # 讓治療師可以手動切換 Class
+    selected_class = st.radio("手動選擇分級", options, index=default_idx, horizontal=True, label_visibility="collapsed")
+    
+    # 用來放置報告結果的容器，設定在輸入框的上方
+    result_container = st.container()
+    
+    st.markdown("---")
+    st.subheader("🎯 輸入數據 (Input Data)")
+
+    c1, c2 = st.columns(2)
+    age = c1.number_input("年齡 (Age)", min_value=10, max_value=120, value=None, step=1, key="thr_age")
+    rhr = c2.number_input("靜息心率 (RHR)", min_value=30, max_value=220, value=None, step=1, key="thr_rhr")
+
+    # --- 新增：手動點擊計算按鈕 ---
+    if st.button("計算 (Calculate)", type="primary"):
+        if age is not None and rhr is not None:
+            # 依據治療師手動選擇的 selected_class 來計算
+            thr_string, err = calculate_thr(int(age), int(rhr), selected_class)
+            
+            if not err:
+                recs = {
+                    "Class I": {
+                        "intensity": "✅ Moderate | ✅ Vigorous",
+                        "hrr": "40 – 84% HRR",
+                        "rpe": "< 17",
+                        "test": "Not required",
+                        "supervision": "Not required",
+                        "monitor": "Monitor heart rate in first session to facilitate teaching but it is not compulsory."
+                    },
+                    "Class II": {
+                        "intensity": "✅ Moderate | ❌ Vigorous",
+                        "hrr": "40 – 60% HRR",
+                        "rpe": "< 14",
+                        "test": "Not required unless patient is working for vigorous exercise.",
+                        "supervision": "Not required unless patient is working for vigorous exercise.",
+                        "monitor": "Continuous heart rate or RPE monitoring."
+                    },
+                    "Class III": {
+                        "intensity": "❌ Moderate | ❌ Vigorous",
+                        "hrr": "< 40% HRR",
+                        "rpe": "< 12",
+                        "test": "Required for both moderate and vigorous exercise.",
+                        "supervision": "Required for both moderate and vigorous exercise.",
+                        "monitor": "Continuous heart rate and RPE monitoring together with close supervision."
+                    }
+                }
+                rec = recs[selected_class]
+                
+                # 將計算結果塞進上方的 result_container 中
+                result_container.markdown(f"""
+                <div class="final-result-box" style="margin-bottom: 20px;">
+                    <div class="final-thr-part">
+                        {thr_string}
+                    </div>
+                    <div class="final-rec-part">
+                        <h3 style="margin-top: 0; border-bottom: 2px solid #ccc; padding-bottom: 10px;">📋 {selected_class} Clinical Guidelines</h3>
+                        <p><b>Recommended Exercise Intensity:</b> {rec['intensity']}</p>
+                        <p><b>Safe exercise zone:</b> {rec['hrr']}</p>
+                        <p><b>RPE during Exercise:</b> {rec['rpe']}</p>
+                        <p><b>Submaximal Stress Test (3-min step test):</b><br>{rec['test']}</p>
+                        <p><b>Supervision:</b><br>{rec['supervision']}</p>
+                        <p><b>Monitoring:</b><br>{rec['monitor']}</p>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
             else:
-                st.subheader("THR 計算結果")
-                st.text(thr_output)
+                result_container.error(err)
+        else:
+            result_container.warning("⚠️ 請先在下方輸入有效的年齡與靜息心率數值，再按下「計算」。")
+    else:
+        # 如果還沒按下計算按鈕，顯示友善的提示
+        result_container.info("💡 請在下方輸入您的 **年齡 (Age)** 與 **靜息心率 (RHR)**，並按下「計算 (Calculate)」以產生報告。")
 
-# ---------- Main ----------
+
 def main():
-    st.set_page_config(page_title=PAGE_TITLE, layout="centered")
-    inject_global_css()
-    st.title(PAGE_TITLE)
-
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "1. PAR-Q",
-        "2. 心血管疾病風險問卷",
-        "3. 主要徵狀（含最終送出）",
-        "4. 運動分級與 THR"
-    ])
-
-    with tab1:
-        tab_parq()
-    with tab2:
-        tab_tab2()
-    with tab3:
-        tab3_final_submit()   # submission button only here, computes & stores
-    with tab4:
-        tab4_thr_display()
-
-    st.markdown("---")
-    st.caption("免責聲明：此工具僅為快速篩檢與教育用途，不能替代專業醫療評估。")
+    inject_custom_css()
+    
+    current_class = calculate_current_class()
+    risk_score = get_risk_score()
+    
+    class_colors = {
+        "Class I": {"bg": "#e8f5e9", "border": "#2e7d32", "text": "#1b5e20"},
+        "Class II": {"bg": "#fff3e0", "border": "#ef6c00", "text": "#e65100"},
+        "Class III": {"bg": "#ffebee", "border": "#c62828", "text": "#b71c1c"}
+    }
+    theme = class_colors[current_class]
+    
+    st.markdown(f"""
+    <div style="background-color: {theme['bg']}; border: 2px solid {theme['border']}; border-radius: 8px; padding: 10px; text-align: center; margin-bottom: 15px;">
+        <span style="margin: 0; color: {theme['text']}; font-size: 24px; font-weight: bold;">Risk Stratification: {current_class}</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.title("體能活動風險與強度評估系統")
+    
+    # 決定隱藏邏輯
+    history_or_symptoms = any([st.session_state.get("hist_c"), st.session_state.get("hist_p"), st.session_state.get("hist_m")]) or \
+                          any([st.session_state.get(f"sy_{i}") for i in range(9)])
+    is_class_2_from_b = (risk_score >= 2)
+    show_all_tabs = st.session_state.get("force_show_all", False)
+    
+    if history_or_symptoms and not show_all_tabs:
+        # C + THR 模式 (隱藏 B 和 A)
+        t1, t4 = st.tabs(["Form C: 疾病症狀", "心率計算"])
+        with t1: tab_c_symptoms(is_class_3=True, show_all_tabs=False)
+        with t4: tab_d_thr(current_class)
+        
+    elif is_class_2_from_b and not show_all_tabs:
+        # C + B + THR 模式 (隱藏 A)
+        t1, t2, t4 = st.tabs(["Form C: 疾病症狀", "Form B: 風險因素", "心率計算"])
+        with t1: tab_c_symptoms(is_class_3=False, show_all_tabs=False)
+        with t2: tab_b_risk(is_class_2_b=True, show_all_tabs=False)
+        with t4: tab_d_thr(current_class)
+        
+    else:
+        # 全部顯示模式 (C + B + A + THR)
+        t1, t2, t3, t4 = st.tabs(["Form C: 疾病症狀", "Form B: 風險因素", "Form A: 適應能力問卷", "心率計算"])
+        with t1: tab_c_symptoms(is_class_3=history_or_symptoms, show_all_tabs=show_all_tabs)
+        with t2: tab_b_risk(is_class_2_b=is_class_2_from_b, show_all_tabs=show_all_tabs)
+        with t3: tab_a_parq()
+        with t4: tab_d_thr(current_class)
 
 if __name__ == "__main__":
     main()
